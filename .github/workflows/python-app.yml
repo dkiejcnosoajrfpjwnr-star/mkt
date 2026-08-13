@@ -1,0 +1,95 @@
+name: Library Bot
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# تشغيل نسخة واحدة فقط.
+# إذا بدأت تشغيلًا يدويًا جديدًا، يُلغى القديم ولا يعيد القديم تشغيل نفسه.
+concurrency:
+  group: library-bot
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write   # مطلوب لإعادة تشغيل الـ workflow تلقائياً
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    # نترك وقتًا كافيًا لخطوات الحفظ وإعادة التشغيل قبل حد GitHub.
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # ─── استعادة data.json (قاعدة بيانات القنوات) ───
+      - name: Restore data.json
+        uses: actions/cache@v4
+        with:
+          path: data.json
+          key: bot-data-${{ github.run_id }}
+          restore-keys: |
+            bot-data-
+
+      # ─── استعادة bot_persistence.pkl (جلسات المستخدمين) ───
+      - name: Restore bot_persistence
+        uses: actions/cache@v4
+        with:
+          path: bot_persistence.pkl
+          key: bot-persistence-${{ github.run_id }}
+          restore-keys: |
+            bot-persistence-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run bot
+        env:
+          BOT_TOKEN:    ${{ secrets.BOT_TOKEN }}
+          OWNER_ID:     ${{ secrets.OWNER_ID }}
+          API_ID:       ${{ secrets.API_ID }}
+          API_HASH:     ${{ secrets.API_HASH }}
+          SESSION_STR:  ${{ secrets.SESSION_STR }}
+          RELAY_CHAT_ID: ${{ secrets.RELAY_CHAT_ID }}
+          CHANNELS:     ${{ secrets.CHANNELS }}
+          MONGODB_URI:  ${{ secrets.MONGODB_URI }}
+          MONGODB_DB:   ${{ secrets.MONGODB_DB || 'book_bot' }}
+        # ينهي البوت نفسه قبل 350 دقيقة حتى تعمل خطوة إعادة التشغيل.
+        run: timeout --signal=TERM --kill-after=30s 345m python main.py
+
+      # ─── حفظ data.json بعد التوقف ───
+      - name: Save data.json
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: data.json
+          key: bot-data-${{ github.run_id }}
+
+      # ─── حفظ bot_persistence.pkl بعد التوقف ───
+      - name: Save bot_persistence
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: bot_persistence.pkl
+          key: bot-persistence-${{ github.run_id }}
+
+      # ─── إعادة تشغيل البوت فوراً بعد الانتهاء (يقلل التأخير إلى ~30 ثانية) ───
+      - name: Auto-restart bot
+        # لا تعِد تشغيله إذا كان GitHub قد ألغى هذا التشغيل
+        # بسبب بدء تشغيل أحدث.
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          gh workflow run bot.yml \
+            --repo ${{ github.repository }} \
+            --ref ${{ github.ref_name }}
