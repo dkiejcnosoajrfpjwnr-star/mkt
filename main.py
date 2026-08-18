@@ -39,6 +39,7 @@ OWNER_ID     = int(os.environ["OWNER_ID"])
 API_ID       = int(os.environ["API_ID"])
 API_HASH     = os.environ["API_HASH"]
 SESSION_STR  = os.environ["SESSION_STR"]
+GROUP_ID     = int(os.environ["GROUP_ID"])  # المجموعة الوحيدة التي يعمل فيها البوت
 RELAY_CHAT_ID = int(os.environ.get("RELAY_CHAT_ID") or "0")  # معرف مجموعة الريلاي
 MONGODB_URI  = os.environ["MONGODB_URI"].strip()
 MONGODB_DB   = os.environ.get("MONGODB_DB", "book_bot").strip()
@@ -46,24 +47,13 @@ MONGODB_DB   = os.environ.get("MONGODB_DB", "book_bot").strip()
 # القنوات مفصولة بفاصلة: @ch1,https://t.me/ch2,ch3
 _ENV_CHANNELS = os.environ.get("CHANNELS", "")
 
+GROUP_LINK = "https://t.me/ZyDeenX"
 START_MESSAGE = (
-    "🌟 مرحبًا بك في بوت مكتبة الكتب\n\n"
-    "📚 مكتبة رقمية مجانية تضم أكثر من مليون كتاب\n"
-    "🔎 يمكنك البحث بسهولة بكتابة اسم الكتاب أو جزء منه\n\n"
-    "🧭 تعليمات البحث الصحيحة:\n"
-    "✔️ اكتب اسم الكتاب فقط\n"
-    "✔️ أو جزء واضح من العنوان\n\n"
-    "❌ أمثلة بحث غير صحيحة:\n"
-    "✖️ كلمات عشوائية\n"
-    "✖️ جمل طويلة أو أوصاف\n\n"
-    "⚖️ تنويه قانوني:\n"
-    "إدارة وفريق بوت مكتبة الكتب يحترمون حقوق الملكية الفكرية احترامًا تامًا.\n"
-    "جميع الملفات المفهرسة تم رفعها من قبل مستخدمي تيليجرام أو قنوات عامة.\n"
-    "في حال وجود أي محتوى مخالف لحقوق النشر, يرجى التواصل معنا وسيتم حذفه فورًا.\n\n"
-    "📩 باستخدامك للبوت فأنت تقرّ بذلك.\n\n"
-    "📖 نتمنى لك قراءة ممتعة!\n\n"
-    "📌 كيفية طلب الكتب في المجموعة:\n"
-    "اكتب في المجموعة: بحث كتاب مع الذي تريده"
+    "🌟 مرحبًا بك في بوت المكتبة\n\n"
+    "🔎 البحث متاح داخل المجموعة المحددة فقط.\n"
+    "اكتب هناك:\n"
+    "بحث مكتبة <اسم المكتبة>\n\n"
+    "اضغط الزر بالأسفل للانتقال إلى المجموعة."
 )
 
 DATA_FILE        = "data.json"
@@ -74,9 +64,10 @@ MAX_SEARCH_SESSIONS = 20
 
 # كلمات وصفية لا تدخل في اسم الكتاب نفسه عند بداية البحث.
 _SEARCH_PREFIX_WORDS = {
-    "كتاب", "الكتاب",
-    "رواية", "الرواية", "روايه", "الروايه",
+    "مكتبة", "المكتبة",
 }
+
+GENERIC_ERROR_MESSAGE = "⌯ حدثت مشكلة"
 
 # هذا البوت يعتمد على الشبكة أكثر من اعتماده على حسابات CPU ثقيلة.
 # لذلك نزيد عمّال I/O تلقائيًا بحسب الأنوية المتاحة بدل تشغيل نسخ متعددة
@@ -333,7 +324,7 @@ async def _search_single_channel(ch: str, query: str, ids: dict) -> list:
             if not name and msg.caption:
                 name = msg.caption.split("\n")[0].strip()
             if not name:
-                name = "كتاب PDF"
+                name = "ملف PDF"
             results.append({
                 "name":   name[:80],
                 "chat":   ch,
@@ -351,7 +342,7 @@ async def _search_single_channel(ch: str, query: str, ids: dict) -> list:
     return results
 
 
-async def search_books(query: str, channels: list) -> list:
+async def search_libraries(query: str, channels: list) -> list:
     # Pyrogram uses one session for messages.Search. Running several searches
     # at the same time makes Telegram apply a per-session wait (often 31s).
     # Queue separate user requests, while keeping the channels of one request
@@ -457,15 +448,41 @@ def results_keyboard(
     return InlineKeyboardMarkup(buttons)
 
 
-# -- الاوامر --------------------------------------------------------
+# -- قيود التشغيل ---------------------------------------------------
+def is_allowed_group(chat) -> bool:
+    return bool(
+        chat
+        and chat.type in {"group", "supergroup"}
+        and chat.id == GROUP_ID
+    )
+
+
+def group_link_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("الدخول إلى المجموعة", url=GROUP_LINK),
+    ]])
+
+
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(START_MESSAGE)
+    """يوجّه المستخدم للمجموعة دون تشغيل البحث في الخاص."""
+    if not update.message or not update.effective_chat:
+        return
+    chat = update.effective_chat
+    if chat.type in {"group", "supergroup"} and not is_allowed_group(chat):
+        return
+    if chat.type not in {"private", "group", "supergroup"}:
+        return
+    await update.message.reply_text(
+        START_MESSAGE,
+        reply_markup=group_link_keyboard(),
+        disable_web_page_preview=True,
+    )
 
 
 def extract_group_query(text: str) -> Optional[str]:
-    """يستخرج عبارة البحث من صيغة المجموعة: بحث كتاب <العبارة>."""
+    """يستخرج عبارة البحث من صيغة المجموعة: بحث مكتبة <العبارة>."""
     match = re.match(
-        r"^\s*بحث\s+كتاب\s*(?::|：|-)?\s*(.*?)\s*$",
+        r"^\s*بحث\s+مكتبة\s*(?::|：|-)?\s*(.*?)\s*$",
         text,
     )
     query = match.group(1).strip() if match else ""
@@ -494,7 +511,7 @@ _CANONICAL_SEARCH_PREFIX_WORDS = {
 def normalize_search_query(text: str) -> str:
     """
     ينظف عبارة البحث داخل البوت من الرموز والتشكيل والكلمات الوصفية
-    الموجودة في بدايتها، مع الإبقاء على اسم الكتاب كما كتبه المستخدم.
+    الموجودة في بدايتها، مع الإبقاء على اسم المكتبة كما كتبه المستخدم.
     """
     cleaned = []
     for char in text:
@@ -513,27 +530,25 @@ def normalize_search_query(text: str) -> str:
 
 
 async def handle_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not is_allowed_group(update.effective_chat):
+        return
     text = update.message.text.strip()
-    chat_type = update.effective_chat.type if update.effective_chat else "private"
-    if chat_type in {"group", "supergroup"}:
-        query = extract_group_query(text)
-        if not query:
-            return
-    else:
-        query = text
+    query = extract_group_query(text)
+    if not query:
+        return
     query = normalize_search_query(query)
     if not query:
         return
     data = load_data()
     if not data["channels"]:
-        await update.message.reply_text("لا توجد قنوات مكتبية مضافة بعد.")
+        await update.message.reply_text(GENERIC_ERROR_MESSAGE)
         return
 
     msg     = await update.message.reply_text(f"جاري البحث عن: {query}...")
-    results = await search_books(query, data["channels"])
+    results = await search_libraries(query, data["channels"])
     words = query.split()
     if not results and len(words) > 2:
-        results = await search_books(" ".join(words[:2]), data["channels"])
+        results = await search_libraries(" ".join(words[:2]), data["channels"])
 
     # يحتفظ كل بحث بمعرّف مستقل حتى تبقى أزرار كل رسالة مرتبطة بنتائجها.
     search_id = uuid4().hex[:12]
@@ -543,7 +558,7 @@ async def handle_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await msg.edit_text(f"لم يتم العثور على نتائج لـ: {query}")
         return
 
-    text = f"نتائج البحث عن: {query}\nعدد النتائج: {len(results)}\n\nاضغط على الكتاب لاستلامه:"
+    text = f"نتائج البحث عن: {query}\nعدد النتائج: {len(results)}\n\nاضغط على الملف لاستلامه:"
     await msg.edit_text(
         text,
         reply_markup=results_keyboard(results, 0, search_id),
@@ -552,6 +567,8 @@ async def handle_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cb_page(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     q    = update.callback_query
+    if not q or not is_allowed_group(q.message.chat):
+        return
     parts = q.data.split(":")
     await q.answer()
     if len(parts) >= 3:
@@ -567,7 +584,7 @@ async def cb_page(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not results:
         await q.message.edit_text("انتهت الجلسة. ابحث مجدداً.")
         return
-    text = f"نتائج البحث عن: {query}\nعدد النتائج: {len(results)}\n\nاضغط على الكتاب لاستلامه:"
+    text = f"نتائج البحث عن: {query}\nعدد النتائج: {len(results)}\n\nاضغط على الملف لاستلامه:"
     await q.message.edit_text(
         text,
         reply_markup=results_keyboard(
@@ -580,6 +597,8 @@ async def cb_page(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cb_send_book(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     q = update.callback_query
+    if not q or not is_allowed_group(q.message.chat):
+        return
     parts = q.data.split(":")
     await q.answer("جاري الإرسال...")
     if len(parts) >= 3:
@@ -608,7 +627,25 @@ async def cb_send_book(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         reply_to_message_id,
     )
     if not success:
-        await q.message.reply_text(f"تعذّر إرسال الملف.\n\nالسبب: {err}")
+        await q.message.reply_text(GENERIC_ERROR_MESSAGE)
+
+
+async def handle_error(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """يسجل التفاصيل داخليًا ولا يكشفها للمستخدم."""
+    logger.error("Unhandled update error", exc_info=ctx.error)
+    chat = getattr(update, "effective_chat", None)
+    if not is_allowed_group(chat):
+        return
+    try:
+        if getattr(update, "callback_query", None):
+            await update.callback_query.answer(
+                GENERIC_ERROR_MESSAGE,
+                show_alert=True,
+            )
+        elif getattr(update, "message", None):
+            await update.message.reply_text(GENERIC_ERROR_MESSAGE)
+    except Exception:
+        logger.error("Could not send generic error message", exc_info=True)
 
 
 # -- التشغيل --------------------------------------------------------
@@ -628,6 +665,7 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(cb_page,      pattern="^pg:"))
     app.add_handler(CallbackQueryHandler(cb_send_book, pattern="^sb:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_search))
+    app.add_error_handler(handle_error)
 
     logger.info("Bot started...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
