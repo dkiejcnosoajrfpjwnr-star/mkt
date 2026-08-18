@@ -50,8 +50,8 @@ _ENV_CHANNELS = os.environ.get("CHANNELS", "")
 
 GROUP_LINK = "https://t.me/ZyDeenX"
 START_MESSAGE = (
-    "🌟 مرحبًا بك في بوت المكتبة\n\n"
-    "🔎 البحث متاح داخل المجموعة المحددة فقط.\n"
+    "🖱️ اهلا بك في بوت مكتبة حوار الاديان\n\n"
+    "↬  البحث متاح داخل المجموعة المحددة فقط.\n"
     "اكتب هناك:\n"
     "بحث مكتبة <اسم المكتبة>\n\n"
     "اضغط الزر بالأسفل للانتقال إلى المجموعة."
@@ -461,7 +461,7 @@ def is_allowed_group(chat) -> bool:
 
 def group_link_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton("الدخول إلى المجموعة", url=GROUP_LINK),
+        InlineKeyboardButton("⤶الدخول إلى المجموعة", url=GROUP_LINK),
     ]])
 
 
